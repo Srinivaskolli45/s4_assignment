@@ -1,103 +1,119 @@
+!git clone https://github.com/Srinivaskolli45/srinivas.git
+%cd srinivas/
+!git pull origin
+%cd ..
+!pip install torchsummary
+
+'''Train CIFAR10 with PyTorch.'''
+!pip install grad-cam
+import sys
+sys.path.append('/content/srinivas/')
+sys.path.append('/content/srinivas/models')
 import torch
-import torchvision
-import numpy as np
-import copy
 import torch.nn as nn
-import albumentations as A
-from torchvision import datasets
-from train import fit_model
-from data import AlbumentationImageDataset
-from Assignment_9_model import Transformer
-from torch_lr_finder import LRFinder
-from torchsummary import summary
-import seaborn as sns
+import torch.optim as optim
+import torch.nn.functional as F
+import torch.backends.cudnn as cudnn
+import albumentations as Alb
+import torchvision
+import torchvision.transforms as transforms
+import numpy as np
+from utils import *
+from testModel import *
+from trainModel import *
+from custom_resnet import *
+#from utils import progress_bar
+from albumentation_helper import *
+import dataloader
 
 
-SEED = 1
+#working on GradCAM 
+from pytorch_grad_cam import GradCAM
+from pytorch_grad_cam.utils.model_targets import ClassifierOutputTarget
+from pytorch_grad_cam.utils.image import show_cam_on_image
 
-# CUDA?
-cuda = torch.cuda.is_available()
-print("CUDA Available:", cuda)
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
+best_acc = 0  # best test accuracy
+start_epoch = 0  # start from epoch 0 or last checkpoint epoch
+batch_size = 512
 
-# For reproducibility
-torch.manual_seed(SEED)
-
-if cuda:
-    torch.cuda.manual_seed(SEED)
-    BATCH_SIZE=512
-else:
-    BATCH_SIZE=32
-
-
-trainset = torchvision.datasets.CIFAR10(root='./data', train=True,
-                                        download=True )
-testset = torchvision.datasets.CIFAR10(root='./data', train=False,
-                                       download=True)
-
-
-train_loader = torch.utils.data.DataLoader(AlbumentationImageDataset(trainset, train=True), batch_size=BATCH_SIZE,
-                                          shuffle=True, num_workers=2)
-test_loader = torch.utils.data.DataLoader(AlbumentationImageDataset(testset, train=False), batch_size=BATCH_SIZE,
-                                          shuffle=False, num_workers=1)
+# Data
+print('==> Preparing data..')
 
 use_cuda = torch.cuda.is_available()
-device = torch.device("cuda" if use_cuda else "cpu")
-net = Transformer().to(device)
-print(summary(net, input_size=(3, 32, 32)))
 
+CustomTrainTransform = Alb.Compose([Alb.Normalize(mean=(0.49139968, 0.48215841, 0.44653091),std=(0.24703223, 0.24348513, 0.26158784)),
+                                    Alb.PadIfNeeded(min_height=40, min_width=40, border_mode=4, value=None, p=1.0),
+                                    Alb.RandomCrop(32,32),
+                                    Alb.HorizontalFlip(p=0.1),
+                                    Alb.Cutout(8,8,p=0.2)])
+ 
+transform = Alb_Transforms(CustomTrainTransform)
+TestTransform = transforms.Compose([transforms.ToTensor(),
+                                    transforms.Normalize((0.49139968, 0.48215841, 0.44653091), (0.24703223, 0.24348513, 0.26158784))])
+visualTransform = transforms.Compose([transforms.ToTensor()])
+#why we need normalized test data
+#trainset = torchvision.datasets.CIFAR10(root='./data', train=True,
+#                                        download=True, transform=transform)
+trainloader = dataloader.getDataLoader(dataset=torchvision.datasets.CIFAR10, isTrain=True,transform=transform,batchSize=batch_size,isShuffle=True,workers=4,needDownload=True)
+testloader = dataloader.getDataLoader(dataset=torchvision.datasets.CIFAR10, isTrain=False,transform=TestTransform,batchSize=batch_size,isShuffle=False,workers=4,needDownload=True)
 
-exp_net = copy.deepcopy(net).to(device)
-optimizer = torch.optim.Adam(exp_net.parameters(), lr=0.001)
-criterion = nn.NLLLoss()
-lr_finder = LRFinder(exp_net, optimizer, criterion, device=device)
-lr_finder.range_test(train_loader, end_lr=10, num_iter=200)
+classes = ('plane', 'car', 'bird', 'cat',
+           'deer', 'dog', 'frog', 'horse', 'ship', 'truck')
+
+#visualize the 20 images from train set
+vis_dataloader = dataloader.getDataLoader(dataset=torchvision.datasets.CIFAR10, isTrain=True,transform=visualTransform,batchSize=batch_size,isShuffle=True,workers=4,needDownload=True)
+
+# Model
+print(' Building the model..')
+
+net = custom_resnet()
+net = net.to(device)
+if device == 'cuda':
+    net = torch.nn.DataParallel(net)
+    cudnn.benchmark = True
+
+#summary(net, input_size=(3, 32, 32))
+
+!pip install torch_lr_finder
+
+from torch_lr_finder import LRFinder
+
+#define instance of LRFinder
+criterion_new = nn.CrossEntropyLoss()
+optimizer_new = optim.SGD(net.parameters(), lr=0.001, momentum=0.9)
+
+lr_finder = LRFinder(net,optimizer_new,criterion_new)
+
+#Run range test
+lr_finder.range_test(trainloader,start_lr=1e-03,end_lr=1,num_iter=100,step_mode="exp")
 lr_finder.plot()
-min_loss = min(lr_finder.history['loss'])
-ler_rate_1 = lr_finder.history['lr'][np.argmin(lr_finder.history['loss'], axis=0)]
-print("Max LR is {}".format(ler_rate_1))
+lr_finder.reset()
 
-exp_net = copy.deepcopy(net).to(device)
-optimizer = torch.optim.Adam(exp_net.parameters(), lr=ler_rate_1/10)
-criterion = nn.NLLLoss()
-lr_finder = LRFinder(exp_net, optimizer, criterion, device=device)
-lr_finder.range_test(train_loader, end_lr=ler_rate_1*10, num_iter=200)
-lr_finder.plot()
-min_loss = min(lr_finder.history['loss'])
-ler_rate_2 = lr_finder.history['lr'][np.argmin(lr_finder.history['loss'], axis=0)]
-print("Max LR is {}".format(ler_rate_2))
+from torch.optim.lr_scheduler import OneCycleLR
 
+ler_rate = 0.04912
+#Let's start with loading the trained model and train again further
 
-ler_rate = ler_rate_2
-print("Determined Max LR is:", ler_rate)
+#load parameters to model
+#net.load_state_dict(model_parameters)
+criterion = nn.CrossEntropyLoss()
+optimizer = optim.SGD(net.parameters(), lr=0.001, momentum=0.9)
 
-
-train_net_1 = copy.deepcopy(net).to(device)
-optimizer = torch.optim.Adam(train_net_1.parameters(), lr=(ler_rate/10))
-scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, 
-                                                max_lr=ler_rate,
-                                                steps_per_epoch=len(train_loader), 
-                                                epochs=24,
-                                                pct_start=0.2,
-                                                div_factor=10,
-                                                three_phase=False, 
-                                                final_div_factor=50,
-                                                anneal_strategy='linear'
-                                                ) #final_div_factor=100,
-train_net_1, history = fit_model(
-    train_net_1, device=device,
-    criterion = nn.CrossEntropyLoss(),
-    train_loader=train_loader,
-    test_loader=test_loader,
-    optimizer=optimizer, 
-    scheduler=scheduler, 
-    NUM_EPOCHS=24
-)
+#Train again with one cycle policy now
+epochs = 24
+steps_per_epoch = len(trainloader) 
+total_steps = epochs * len(trainloader)
 
 
-training_acc, training_loss, testing_acc, testing_loss, lr_trend = history
 
-sns.lineplot(x = list(range(1, 25)), y = training_acc)
-sns.lineplot(x = list(range(1, 25)), y = testing_acc)
-sns.lineplot(x = list(range(1, 25)), y = training_loss)
-sns.lineplot(x = list(range(1, 25)), y = testing_loss)
-sns.lineplot(x = list(range(1, len(lr_trend)+1)), y = lr_trend)
+pct_start = (10*steps_per_epoch)/total_steps
+print(f'pct_start --> {pct_start}')
+scheduler = OneCycleLR(optimizer,max_lr=ler_rate,
+                       steps_per_epoch=steps_per_epoch,epochs=epochs,
+                       pct_start=pct_start,div_factor=10,final_div_factor=10,verbose=False)
+
+#Train the model further
+for epoch in range(start_epoch, start_epoch+24):
+    train_model(dataloader=trainloader,network=net,lossfn=criterion,optimizer=optimizer,scheduler=scheduler)
+    test_model(dataloader=testloader,network=net,lossfn=criterion)
