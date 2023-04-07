@@ -40,17 +40,17 @@ class Transformer_VIT(nn.Module):
     self.conv1 = nn.Sequential(
         nn.Conv2d(in_channels =3, out_channels=16, kernel_size=(3,3), padding=1, bias=False),      # Output - 16x32x32
         nn.BatchNorm2d(16),
-        nn.RelU())
+        nn.ReLU())
     
     self.conv2 = nn.Sequential(
         nn.Conv2d(in_channels =16, out_channels=32, kernel_size=(3,3), padding=1, bias=False),      # Output - 32x32x32
         nn.BatchNorm2d(32),
-        nn.RelU())
+        nn.ReLU())
     
     self.conv3 = nn.Sequential(
         nn.Conv2d(in_channels =32, out_channels=48, kernel_size=(3,3), padding=1, bias=False),      # Output - 48x32x32
         nn.BatchNorm2d(48),
-        nn.RelU())
+        nn.ReLU())
     
     self.gap = nn.AvgPool2d(32)            # Output - 48x1x1
 
