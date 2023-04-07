@@ -1,70 +1,72 @@
-'''Some helper functions for PyTorch, including:
-    - get_mean_and_std: calculate the mean and std value of dataset.
-    - msr_init: net parameter initialization.
-    - progress_bar: progress bar mimic xlua.progress.
-'''
-import os
-import sys
-import time
-import math
-
-import torch.nn as nn
-import torch.nn.init as init
 import matplotlib.pyplot as plt
 import numpy as np
+import albumentations as A
+from torchvision import datasets
+
+exp = datasets.CIFAR10('./data', train=True, download=True)
+exp_data = exp.data
+
+def show_images(aug_dict, ncol=6):
+  nrow = len(aug_dict)
+
+  fig, axes = plt.subplots(ncol, nrow, figsize=( 3*nrow, 15), squeeze=False)
+  for i, (key, aug) in enumerate(aug_dict.items()):
+    for j in range(ncol):
+      ax = axes[j,i]
+      if j == 0:
+        ax.text(0.5, 0.5, key, horizontalalignment='center', verticalalignment='center', fontsize=15)
+        ax.get_xaxis().set_visible(False)
+        ax.get_yaxis().set_visible(False)
+        ax.axis('off')
+      else:
+        image, label = exp_data[j-1]
+        if aug is not None:
+          transform = A.Compose([aug])
+          image = np.array(image)
+          image = transform(image=image)['image']
+          
+        ax.imshow(image)
+        ax.set_title(f'{exp_data.classes[label]}')
+        ax.axis('off')
+
+  plt.tight_layout()
+  plt.show()
+
+
+def viz_data(cols=8, rows=5):
+  figure = plt.figure(figsize=(14, 10))
+  for i in range(1, cols * rows + 1):
+    img, label = exp_data[i]
+
+    figure.add_subplot(rows, cols, i)
+    plt.title(exp_data.classes[label])
+    plt.axis("off")
+    plt.imshow(img, cmap="gray")
+
+  plt.tight_layout()
+  plt.show()
 
 
 
-def get_mean_and_std(dataset):
-    '''Compute the mean and std value of dataset.'''
-    dataloader = torch.utils.data.DataLoader(dataset, batch_size=1, shuffle=True, num_workers=2)
-    mean = torch.zeros(3)
-    std = torch.zeros(3)
-    print('==> Computing mean and std..')
-    for inputs, targets in dataloader:
-        for i in range(3):
-            mean[i] += inputs[:,i,:,:].mean()
-            std[i] += inputs[:,i,:,:].std()
-    mean.div_(len(dataset))
-    std.div_(len(dataset))
-    return mean, std
 
+# Calculate the mean and std for normalization
+print('[Train]')
+print(' - Numpy Shape:', exp_data.shape)
+print(' - min:', np.min(exp_data, axis=(0,1,2)) / 255.)
+print(' - max:', np.max(exp_data, axis=(0,1,2)) / 255.)
+print(' - mean:', np.mean(exp_data, axis=(0,1,2)) / 255.)
+print(' - std:', np.std(exp_data, axis=(0,1,2)) / 255.)
+print(' - var:', np.var(exp_data, axis=(0,1,2)) / 255.)
 
-def format_time(seconds):
-    days = int(seconds / 3600/24)
-    seconds = seconds - days*3600*24
-    hours = int(seconds / 3600)
-    seconds = seconds - hours*3600
-    minutes = int(seconds / 60)
-    seconds = seconds - minutes*60
-    secondsf = int(seconds)
-    seconds = seconds - secondsf
-    millis = int(seconds*1000)
+print("Visualization of clean data")
+viz_data()
 
-    f = ''
-    i = 1
-    if days > 0:
-        f += str(days) + 'D'
-        i += 1
-    if hours > 0 and i <= 2:
-        f += str(hours) + 'h'
-        i += 1
-    if minutes > 0 and i <= 2:
-        f += str(minutes) + 'm'
-        i += 1
-    if secondsf > 0 and i <= 2:
-        f += str(secondsf) + 's'
-        i += 1
-    if millis > 0 and i <= 2:
-        f += str(millis) + 'ms'
-        i += 1
-    if f == '':
-        f = '0ms'
-    return f
-
-
-# functions to show an cifar_image
-def imshow_cifar(img):
-    img = img / 2 + 0.5     # unnormalize
-    npimg = img.numpy()
-    plt.imshow(np.transpose(npimg, (1, 2, 0)))
+print("Visualization of augmented data")
+show_images({
+    'Original Image': None,
+    'Pad and Crop' : A.Compose([A.PadIfNeeded(min_height=36, min_width=36, always_apply=True, p=1), A.RandomCrop(32, 32, always_apply=True)]),
+    'Horizontal Flip': A.HorizontalFlip(always_apply=True),
+    'Cut Out': A.CoarseDropout(max_holes=1, max_height=8, max_width=8, min_holes=1, min_height=8, 
+                               min_width=8, fill_value=0.473363, mask_fill_value=None, always_apply=True),
+    'Gray Scale': A.ToGray(always_apply=True)
+})
