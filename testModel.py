@@ -5,28 +5,24 @@ import numpy as np
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-def test_model(dataloader,network,lossfn):
-	global best_acc
-	network.eval()
-	test_loss = 0
-	correct = 0
-	total = 0
-	batches = 0
-	with torch.no_grad():
-		for batch_idx, (inputs, targets) in enumerate(dataloader):
-			#inputs = list(inputs.values())
-			#inputs = inputs[0]
+def test(model, device, test_loader, criterion):
+    
+    model.eval()
+    test_loss = 0
+    correct = 0
+    #iteration = len(test_loader.dataset)// test_loader.batch_size
+    with torch.no_grad():
+        for data, target in test_loader:
+            data, target = data.to(device), target.to(device)
+            output = model(data)
+            test_loss += criterion(output, target).item()  # sum up batch loss
+            pred = output.argmax(dim=1, keepdim=True)  # get the index of the max log-probability
+            correct += pred.eq(target.view_as(pred)).sum().item()
 
-			inputs, targets = inputs.to(device), targets.to(device)
-			outputs = network(inputs)
-			loss = lossfn(outputs, targets)
+    test_loss /= len(test_loader)
 
-			test_loss += loss.item()
-			_, predicted = outputs.max(1)
-			total += targets.size(0)
-			correct += predicted.eq(targets).sum().item()
-			batches +=1
+    print('\nTest set: Average loss: {:.4f}, Accuracy: {}/{} ({:.2f}%)'.format(
+        test_loss, correct, len(test_loader.dataset),
+        100. * correct / len(test_loader.dataset)))
+    return 100. * correct / len(test_loader.dataset), test_loss
 
-			
-	print('Test model Loss: %.3f | Acc: %.3f%% (%d/%d)'
-				 % (test_loss/(batches), 100.*correct/total, correct, total))
